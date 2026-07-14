@@ -1,0 +1,897 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PDF → EPUB Converter</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;1,400&family=DM+Mono:wght@300;400;500&display=swap" rel="stylesheet">
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg: #0d0d0f;
+    --surface: #141418;
+    --border: #252530;
+    --accent: #c8a96e;
+    --accent2: #7c6aff;
+    --text: #e8e4dc;
+    --muted: #6b6878;
+    --danger: #e05a5a;
+    --success: #5acea0;
+  }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'DM Mono', monospace;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 40px 20px 80px;
+    position: relative;
+    overflow-x: hidden;
+  }
+
+  /* Atmospheric background */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background:
+      radial-gradient(ellipse 60% 40% at 20% 10%, rgba(124,106,255,0.07) 0%, transparent 60%),
+      radial-gradient(ellipse 50% 50% at 80% 80%, rgba(200,169,110,0.06) 0%, transparent 60%);
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  .grain {
+    position: fixed;
+    inset: 0;
+    opacity: 0.025;
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  .wrapper {
+    width: 100%;
+    max-width: 760px;
+    position: relative;
+    z-index: 1;
+  }
+
+  /* Header */
+  header {
+    text-align: center;
+    margin-bottom: 52px;
+  }
+
+  .logo-line {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 18px;
+    margin-bottom: 10px;
+  }
+
+  .logo-icon {
+    width: 42px;
+    height: 42px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  h1 {
+    font-family: 'Playfair Display', serif;
+    font-size: clamp(2rem, 5vw, 3rem);
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    background: linear-gradient(135deg, var(--accent) 0%, #e8d5a8 50%, var(--accent2) 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  .tagline {
+    font-size: 0.75rem;
+    color: var(--muted);
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    margin-top: 4px;
+  }
+
+  /* Card */
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 36px;
+    margin-bottom: 24px;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .card::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, rgba(200,169,110,0.3), transparent);
+  }
+
+  /* Drop zone */
+  .dropzone {
+    border: 2px dashed var(--border);
+    border-radius: 12px;
+    padding: 52px 24px;
+    text-align: center;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    background: rgba(255,255,255,0.01);
+    position: relative;
+  }
+
+  .dropzone:hover, .dropzone.drag-over {
+    border-color: var(--accent);
+    background: rgba(200,169,110,0.04);
+  }
+
+  .dropzone.drag-over {
+    transform: scale(1.01);
+  }
+
+  .drop-icon {
+    font-size: 3rem;
+    margin-bottom: 16px;
+    display: block;
+    opacity: 0.6;
+  }
+
+  .drop-title {
+    font-family: 'Playfair Display', serif;
+    font-size: 1.2rem;
+    color: var(--text);
+    margin-bottom: 8px;
+  }
+
+  .drop-sub {
+    font-size: 0.72rem;
+    color: var(--muted);
+    letter-spacing: 0.1em;
+  }
+
+  #fileInput { display: none; }
+
+  /* File info */
+  .file-info {
+    display: none;
+    align-items: center;
+    gap: 14px;
+    padding: 16px 20px;
+    background: rgba(200,169,110,0.06);
+    border: 1px solid rgba(200,169,110,0.2);
+    border-radius: 10px;
+    margin-top: 20px;
+  }
+
+  .file-info.show { display: flex; }
+
+  .file-icon {
+    font-size: 1.8rem;
+    flex-shrink: 0;
+  }
+
+  .file-details { flex: 1; min-width: 0; }
+
+  .file-name {
+    font-size: 0.82rem;
+    color: var(--accent);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .file-size {
+    font-size: 0.68rem;
+    color: var(--muted);
+    margin-top: 2px;
+  }
+
+  .remove-btn {
+    background: none;
+    border: none;
+    color: var(--muted);
+    cursor: pointer;
+    font-size: 1.1rem;
+    padding: 4px;
+    transition: color 0.2s;
+  }
+
+  .remove-btn:hover { color: var(--danger); }
+
+  /* Settings */
+  .settings-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 18px;
+    margin-top: 0;
+  }
+
+  @media (max-width: 520px) {
+    .settings-grid { grid-template-columns: 1fr; }
+  }
+
+  .field {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .field.full { grid-column: 1 / -1; }
+
+  label {
+    font-size: 0.65rem;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+
+  input[type="text"], input[type="number"], select {
+    background: rgba(255,255,255,0.03);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px 14px;
+    color: var(--text);
+    font-family: 'DM Mono', monospace;
+    font-size: 0.8rem;
+    outline: none;
+    transition: border-color 0.2s;
+    width: 100%;
+  }
+
+  input[type="text"]:focus, input[type="number"]:focus, select:focus {
+    border-color: var(--accent);
+  }
+
+  select option { background: #1a1a20; }
+
+  /* Section title */
+  .section-title {
+    font-size: 0.65rem;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-bottom: 18px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .section-title::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: var(--border);
+  }
+
+  /* Convert button */
+  .convert-btn {
+    width: 100%;
+    padding: 16px;
+    background: linear-gradient(135deg, var(--accent) 0%, #a87d3e 100%);
+    color: #0d0d0f;
+    border: none;
+    border-radius: 10px;
+    font-family: 'DM Mono', monospace;
+    font-size: 0.85rem;
+    font-weight: 500;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    cursor: pointer;
+    transition: all 0.25s ease;
+    position: relative;
+    overflow: hidden;
+    margin-top: 8px;
+  }
+
+  .convert-btn::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(135deg, rgba(255,255,255,0.15), transparent);
+    opacity: 0;
+    transition: opacity 0.2s;
+  }
+
+  .convert-btn:hover:not(:disabled)::before { opacity: 1; }
+  .convert-btn:hover:not(:disabled) { transform: translateY(-1px); box-shadow: 0 8px 24px rgba(200,169,110,0.25); }
+  .convert-btn:active:not(:disabled) { transform: translateY(0); }
+  .convert-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  /* Progress */
+  .progress-wrap {
+    display: none;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .progress-wrap.show { display: flex; }
+
+  .progress-label {
+    font-size: 0.7rem;
+    color: var(--muted);
+    display: flex;
+    justify-content: space-between;
+  }
+
+  .progress-bar-bg {
+    height: 4px;
+    background: var(--border);
+    border-radius: 2px;
+    overflow: hidden;
+  }
+
+  .progress-bar-fill {
+    height: 100%;
+    background: linear-gradient(90deg, var(--accent2), var(--accent));
+    border-radius: 2px;
+    width: 0%;
+    transition: width 0.3s ease;
+  }
+
+  /* Log */
+  .log-area {
+    background: rgba(0,0,0,0.3);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 14px 16px;
+    font-size: 0.7rem;
+    color: var(--muted);
+    max-height: 140px;
+    overflow-y: auto;
+    line-height: 1.8;
+    display: none;
+  }
+
+  .log-area.show { display: block; }
+  .log-area .ok { color: var(--success); }
+  .log-area .err { color: var(--danger); }
+  .log-area .info { color: var(--accent); }
+
+  /* Download */
+  .download-section {
+    display: none;
+    text-align: center;
+    padding: 32px;
+    animation: fadeIn 0.5s ease;
+  }
+
+  .download-section.show { display: block; }
+
+  @keyframes fadeIn {
+    from { opacity: 0; transform: translateY(8px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  .success-icon {
+    font-size: 3rem;
+    margin-bottom: 16px;
+    display: block;
+    animation: pop 0.4s cubic-bezier(0.175,0.885,0.32,1.275);
+  }
+
+  @keyframes pop {
+    from { transform: scale(0.5); opacity: 0; }
+    to { transform: scale(1); opacity: 1; }
+  }
+
+  .success-title {
+    font-family: 'Playfair Display', serif;
+    font-size: 1.4rem;
+    color: var(--success);
+    margin-bottom: 6px;
+  }
+
+  .success-sub {
+    font-size: 0.72rem;
+    color: var(--muted);
+    margin-bottom: 24px;
+  }
+
+  .download-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    padding: 14px 32px;
+    background: transparent;
+    border: 1px solid var(--success);
+    border-radius: 8px;
+    color: var(--success);
+    font-family: 'DM Mono', monospace;
+    font-size: 0.8rem;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    cursor: pointer;
+    transition: all 0.25s;
+    text-decoration: none;
+  }
+
+  .download-btn:hover {
+    background: rgba(90,206,160,0.1);
+    transform: translateY(-1px);
+    box-shadow: 0 4px 16px rgba(90,206,160,0.15);
+  }
+
+  .reset-btn {
+    display: block;
+    margin: 14px auto 0;
+    background: none;
+    border: none;
+    color: var(--muted);
+    font-family: 'DM Mono', monospace;
+    font-size: 0.7rem;
+    letter-spacing: 0.1em;
+    cursor: pointer;
+    text-decoration: underline;
+    text-underline-offset: 3px;
+    transition: color 0.2s;
+  }
+
+  .reset-btn:hover { color: var(--text); }
+
+  /* Scrollbar */
+  ::-webkit-scrollbar { width: 4px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+  /* Spinner */
+  .spinner {
+    display: inline-block;
+    width: 14px;
+    height: 14px;
+    border: 2px solid rgba(13,13,15,0.3);
+    border-top-color: #0d0d0f;
+    border-radius: 50%;
+    animation: spin 0.7s linear infinite;
+    vertical-align: middle;
+    margin-right: 8px;
+  }
+
+  @keyframes spin { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+<div class="grain"></div>
+
+<div class="wrapper">
+  <header>
+    <div class="logo-line">
+      <div class="logo-icon">
+        <svg width="36" height="36" viewBox="0 0 36 36" fill="none">
+          <rect x="1" y="1" width="34" height="34" rx="8" stroke="#c8a96e" stroke-width="1.5"/>
+          <text x="18" y="24" text-anchor="middle" font-size="14" fill="#c8a96e" font-family="serif" font-weight="bold">EP</text>
+        </svg>
+      </div>
+      <h1>PDF → EPUB</h1>
+    </div>
+    <p class="tagline">Conversor local · sem servidor · privado</p>
+  </header>
+
+  <!-- Upload card -->
+  <div class="card" id="uploadCard">
+    <p class="section-title">Arquivo de entrada</p>
+
+    <div class="dropzone" id="dropzone" onclick="document.getElementById('fileInput').click()">
+      <span class="drop-icon">📄</span>
+      <p class="drop-title">Solte seu PDF aqui</p>
+      <p class="drop-sub">ou clique para selecionar · máx. 50 MB</p>
+    </div>
+    <input type="file" id="fileInput" accept=".pdf,application/pdf">
+
+    <div class="file-info" id="fileInfo">
+      <span class="file-icon">📕</span>
+      <div class="file-details">
+        <div class="file-name" id="fileName">—</div>
+        <div class="file-size" id="fileSize">—</div>
+      </div>
+      <button class="remove-btn" onclick="removeFile()" title="Remover">✕</button>
+    </div>
+  </div>
+
+  <!-- Settings card -->
+  <div class="card">
+    <p class="section-title">Metadados do ebook</p>
+    <div class="settings-grid">
+      <div class="field full">
+        <label>Título</label>
+        <input type="text" id="epubTitle" placeholder="Nome do livro">
+      </div>
+      <div class="field">
+        <label>Autor</label>
+        <input type="text" id="epubAuthor" placeholder="Nome do autor">
+      </div>
+      <div class="field">
+        <label>Idioma</label>
+        <select id="epubLang">
+          <option value="pt-BR">Português (BR)</option>
+          <option value="pt-PT">Português (PT)</option>
+          <option value="en">English</option>
+          <option value="es">Español</option>
+          <option value="fr">Français</option>
+          <option value="de">Deutsch</option>
+          <option value="it">Italiano</option>
+          <option value="ja">日本語</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>Editora</label>
+        <input type="text" id="epubPublisher" placeholder="Editora (opcional)">
+      </div>
+      <div class="field">
+        <label>Ano de publicação</label>
+        <input type="number" id="epubYear" placeholder="2024" min="1000" max="9999">
+      </div>
+      <div class="field">
+        <label>Descrição</label>
+        <input type="text" id="epubDesc" placeholder="Breve descrição (opcional)">
+      </div>
+    </div>
+  </div>
+
+  <!-- Convert -->
+  <div class="card">
+    <div class="progress-wrap" id="progressWrap">
+      <div class="progress-label">
+        <span id="progressText">Inicializando…</span>
+        <span id="progressPct">0%</span>
+      </div>
+      <div class="progress-bar-bg">
+        <div class="progress-bar-fill" id="progressFill"></div>
+      </div>
+    </div>
+
+    <div class="log-area" id="logArea"></div>
+
+    <div class="download-section" id="downloadSection">
+      <span class="success-icon">✅</span>
+      <p class="success-title">Conversão concluída!</p>
+      <p class="success-sub" id="downloadSub">—</p>
+      <a class="download-btn" id="downloadLink" href="#" download>
+        <span>⬇</span> Baixar EPUB
+      </a>
+      <button class="reset-btn" onclick="resetAll()">Converter outro arquivo</button>
+    </div>
+
+    <button class="convert-btn" id="convertBtn" onclick="startConvert()" disabled>
+      CONVERTER PARA EPUB
+    </button>
+  </div>
+</div>
+
+<script>
+pdfjsLib.GlobalWorkerOptions.workerSrc =
+  'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+
+let selectedFile = null;
+
+// Drag & drop
+const dropzone = document.getElementById('dropzone');
+dropzone.addEventListener('dragover', e => { e.preventDefault(); dropzone.classList.add('drag-over'); });
+dropzone.addEventListener('dragleave', () => dropzone.classList.remove('drag-over'));
+dropzone.addEventListener('drop', e => {
+  e.preventDefault();
+  dropzone.classList.remove('drag-over');
+  const f = e.dataTransfer.files[0];
+  if (f) handleFile(f);
+});
+
+document.getElementById('fileInput').addEventListener('change', e => {
+  if (e.target.files[0]) handleFile(e.target.files[0]);
+});
+
+function handleFile(f) {
+  if (!f.type.includes('pdf') && !f.name.toLowerCase().endsWith('.pdf')) {
+    alert('Por favor, selecione um arquivo PDF.');
+    return;
+  }
+  if (f.size > 52428800) {
+    alert('Arquivo muito grande. Máximo: 50 MB.');
+    return;
+  }
+  selectedFile = f;
+  document.getElementById('fileName').textContent = f.name;
+  document.getElementById('fileSize').textContent = formatBytes(f.size);
+  document.getElementById('fileInfo').classList.add('show');
+  document.getElementById('convertBtn').disabled = false;
+
+  // Suggest title from filename
+  if (!document.getElementById('epubTitle').value) {
+    document.getElementById('epubTitle').value = f.name.replace(/\.pdf$/i, '');
+  }
+}
+
+function removeFile() {
+  selectedFile = null;
+  document.getElementById('fileInfo').classList.remove('show');
+  document.getElementById('convertBtn').disabled = true;
+  document.getElementById('fileInput').value = '';
+  document.getElementById('epubTitle').value = '';
+}
+
+function formatBytes(b) {
+  if (b < 1024) return b + ' B';
+  if (b < 1048576) return (b / 1024).toFixed(1) + ' KB';
+  return (b / 1048576).toFixed(2) + ' MB';
+}
+
+function log(msg, type = '') {
+  const el = document.getElementById('logArea');
+  el.classList.add('show');
+  el.innerHTML += `<div class="${type}">${msg}</div>`;
+  el.scrollTop = el.scrollHeight;
+}
+
+function setProgress(pct, label) {
+  document.getElementById('progressFill').style.width = pct + '%';
+  document.getElementById('progressPct').textContent = Math.round(pct) + '%';
+  if (label) document.getElementById('progressText').textContent = label;
+}
+
+async function startConvert() {
+  if (!selectedFile) return;
+
+  const btn = document.getElementById('convertBtn');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span> PROCESSANDO…';
+
+  document.getElementById('progressWrap').classList.add('show');
+  document.getElementById('logArea').innerHTML = '';
+  document.getElementById('logArea').classList.add('show');
+  document.getElementById('downloadSection').classList.remove('show');
+
+  try {
+    const title    = document.getElementById('epubTitle').value.trim() || selectedFile.name.replace(/\.pdf$/i,'');
+    const author   = document.getElementById('epubAuthor').value.trim() || 'Desconhecido';
+    const lang     = document.getElementById('epubLang').value;
+    const publisher= document.getElementById('epubPublisher').value.trim();
+    const year     = document.getElementById('epubYear').value.trim() || new Date().getFullYear();
+    const desc     = document.getElementById('epubDesc').value.trim();
+
+    log(`📂 Abrindo: ${selectedFile.name}`, 'info');
+    setProgress(5, 'Lendo PDF…');
+
+    const arrayBuffer = await selectedFile.arrayBuffer();
+    const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+    const numPages = pdf.numPages;
+
+    log(`📖 ${numPages} página(s) encontrada(s)`, 'ok');
+    setProgress(10, 'Extraindo texto…');
+
+    // Extract text from all pages
+    const chapters = [];
+    for (let i = 1; i <= numPages; i++) {
+      const page = await pdf.getPage(i);
+      const content = await page.getTextContent();
+
+      // Reconstruct lines with position awareness
+      const items = content.items;
+      let lines = [];
+      let currentLine = '';
+      let lastY = null;
+
+      for (const item of items) {
+        if ('str' in item) {
+          const y = Math.round(item.transform[5]);
+          if (lastY !== null && Math.abs(y - lastY) > 3) {
+            if (currentLine.trim()) lines.push(currentLine.trim());
+            currentLine = '';
+          }
+          currentLine += item.str;
+          lastY = y;
+        }
+      }
+      if (currentLine.trim()) lines.push(currentLine.trim());
+
+      chapters.push({ page: i, lines });
+      const pct = 10 + (i / numPages) * 60;
+      setProgress(pct, `Extraindo página ${i}/${numPages}…`);
+    }
+
+    log(`✅ Texto extraído de ${numPages} páginas`, 'ok');
+    setProgress(72, 'Construindo EPUB…');
+
+    // Build EPUB structure
+    const zip = new JSZip();
+    const uid = 'urn:uuid:' + crypto.randomUUID();
+
+    // mimetype (must be first, uncompressed)
+    zip.file('mimetype', 'application/epub+zip', { compression: 'STORE' });
+
+    // META-INF/container.xml
+    zip.folder('META-INF').file('container.xml', `<?xml version="1.0" encoding="UTF-8"?>
+<container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
+  <rootfiles>
+    <rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/>
+  </rootfiles>
+</container>`);
+
+    // CSS
+    const css = `
+@import url('https://fonts.googleapis.com/css2?family=Lora:ital,wght@0,400;0,600;1,400&display=swap');
+body { font-family: 'Lora', Georgia, serif; line-height: 1.8; margin: 3em 2em; color: #1a1a1a; }
+h1 { font-size: 1.6em; font-weight: 600; margin: 0 0 1.2em; border-bottom: 1px solid #ccc; padding-bottom: 0.5em; }
+p { margin: 0 0 0.9em; text-align: justify; }
+.page-header { font-size: 0.75em; color: #888; margin-bottom: 1.8em; }
+`;
+    const oebps = zip.folder('OEBPS');
+    oebps.folder('css').file('style.css', css);
+
+    // Build HTML chapters (group pages into chapters of 10 pages each)
+    const chunkSize = Math.ceil(numPages / Math.max(1, Math.ceil(numPages / 10)));
+    const chapterFiles = [];
+    let chIdx = 0;
+
+    for (let start = 0; start < chapters.length; start += chunkSize) {
+      chIdx++;
+      const slice = chapters.slice(start, start + chunkSize);
+      const chTitle = numPages <= chunkSize ? title : `Capítulo ${chIdx}`;
+      let body = `<h1>${escapeXml(chTitle)}</h1>\n`;
+
+      for (const { page, lines } of slice) {
+        if (numPages > chunkSize) {
+          body += `<p class="page-header">— Página ${page} —</p>\n`;
+        }
+        // Try to detect headings (short lines ≤ 80 chars at start of page, or ALL CAPS)
+        for (const line of lines) {
+          if (!line) continue;
+          const isHeading = line.length < 80 && (line === line.toUpperCase() && line.length > 3 && /[A-Z]/.test(line));
+          if (isHeading) {
+            body += `<h2>${escapeXml(line)}</h2>\n`;
+          } else {
+            body += `<p>${escapeXml(line)}</p>\n`;
+          }
+        }
+      }
+
+      const html = `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.1//EN" "http://www.w3.org/TR/xhtml11/DTD/xhtml11.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="${lang}">
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=utf-8"/>
+  <title>${escapeXml(chTitle)}</title>
+  <link rel="stylesheet" type="text/css" href="../css/style.css"/>
+</head>
+<body>${body}</body>
+</html>`;
+      const fname = `chapter${String(chIdx).padStart(3,'0')}.xhtml`;
+      oebps.folder('chapters').file(fname, html);
+      chapterFiles.push({ id: `chap${chIdx}`, fname, title: chTitle });
+    }
+
+    log(`📚 ${chapterFiles.length} capítulo(s) gerado(s)`, 'ok');
+    setProgress(85, 'Escrevendo metadados…');
+
+    // content.opf
+    const manifestItems = chapterFiles.map(c =>
+      `    <item id="${c.id}" href="chapters/${c.fname}" media-type="application/xhtml+xml"/>`
+    ).join('\n');
+    const spineItems = chapterFiles.map(c =>
+      `    <itemref idref="${c.id}"/>`
+    ).join('\n');
+
+    const descXml = desc ? `<dc:description>${escapeXml(desc)}</dc:description>` : '';
+    const publisherXml = publisher ? `<dc:publisher>${escapeXml(publisher)}</dc:publisher>` : '';
+
+    oebps.file('content.opf', `<?xml version="1.0" encoding="UTF-8"?>
+<package xmlns="http://www.idpf.org/2007/opf" unique-identifier="BookId" version="2.0">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:opf="http://www.idpf.org/2007/opf">
+    <dc:identifier id="BookId">${uid}</dc:identifier>
+    <dc:title>${escapeXml(title)}</dc:title>
+    <dc:creator opf:role="aut">${escapeXml(author)}</dc:creator>
+    <dc:language>${lang}</dc:language>
+    <dc:date opf:event="publication">${year}-01-01</dc:date>
+    ${publisherXml}
+    ${descXml}
+  </metadata>
+  <manifest>
+    <item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/>
+    <item id="css" href="css/style.css" media-type="text/css"/>
+${manifestItems}
+  </manifest>
+  <spine toc="ncx">
+${spineItems}
+  </spine>
+</package>`);
+
+    // toc.ncx
+    const navPoints = chapterFiles.map((c, i) => `
+    <navPoint id="navPoint-${i+1}" playOrder="${i+1}">
+      <navLabel><text>${escapeXml(c.title)}</text></navLabel>
+      <content src="chapters/${c.fname}"/>
+    </navPoint>`).join('');
+
+    oebps.file('toc.ncx', `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE ncx PUBLIC "-//NISO//DTD ncx 2005-1//EN" "http://www.daisy.org/z3986/2005/ncx-2005-1.dtd">
+<ncx xmlns="http://www.daisy.org/z3986/2005/ncx/" version="2005-1">
+  <head>
+    <meta name="dtb:uid" content="${uid}"/>
+    <meta name="dtb:depth" content="1"/>
+    <meta name="dtb:totalPageCount" content="0"/>
+    <meta name="dtb:maxPageNumber" content="0"/>
+  </head>
+  <docTitle><text>${escapeXml(title)}</text></docTitle>
+  <navMap>${navPoints}
+  </navMap>
+</ncx>`);
+
+    setProgress(95, 'Comprimindo arquivo…');
+    log('🗜️ Gerando arquivo EPUB…', 'info');
+
+    const blob = await zip.generateAsync({
+      type: 'blob',
+      mimeType: 'application/epub+zip',
+      compression: 'DEFLATE',
+      compressionOptions: { level: 6 }
+    });
+
+    const url = URL.createObjectURL(blob);
+    const safeTitle = title.replace(/[^a-zA-Z0-9áéíóúàâêôãõüçÁÉÍÓÚÀÂÊÔÃÕÜÇ\s\-_]/g, '').trim().replace(/\s+/g, '_');
+    const epubName = safeTitle + '.epub';
+
+    document.getElementById('downloadLink').href = url;
+    document.getElementById('downloadLink').download = epubName;
+    document.getElementById('downloadSub').textContent =
+      `${epubName} · ${formatBytes(blob.size)} · ${numPages} páginas · ${chapterFiles.length} capítulo(s)`;
+
+    setProgress(100, 'Concluído!');
+    log(`🎉 EPUB pronto: ${epubName} (${formatBytes(blob.size)})`, 'ok');
+
+    setTimeout(() => {
+      document.getElementById('downloadSection').classList.add('show');
+      btn.style.display = 'none';
+    }, 400);
+
+  } catch (err) {
+    log(`❌ Erro: ${err.message}`, 'err');
+    console.error(err);
+    btn.disabled = false;
+    btn.innerHTML = 'CONVERTER PARA EPUB';
+    setProgress(0, 'Erro na conversão');
+  }
+}
+
+function escapeXml(s) {
+  return String(s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;');
+}
+
+function resetAll() {
+  selectedFile = null;
+  document.getElementById('fileInfo').classList.remove('show');
+  document.getElementById('fileInput').value = '';
+  document.getElementById('epubTitle').value = '';
+  document.getElementById('epubAuthor').value = '';
+  document.getElementById('epubPublisher').value = '';
+  document.getElementById('epubYear').value = '';
+  document.getElementById('epubDesc').value = '';
+  document.getElementById('progressWrap').classList.remove('show');
+  document.getElementById('logArea').classList.remove('show');
+  document.getElementById('logArea').innerHTML = '';
+  document.getElementById('downloadSection').classList.remove('show');
+  document.getElementById('progressFill').style.width = '0%';
+  const btn = document.getElementById('convertBtn');
+  btn.disabled = true;
+  btn.innerHTML = 'CONVERTER PARA EPUB';
+  btn.style.display = '';
+}
+</script>
+</body>
+</html>
